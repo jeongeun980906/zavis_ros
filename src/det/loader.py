@@ -4,7 +4,7 @@
 import sys
 
 # adding Folder_2 to the system path
-sys.path.insert(0, '/home/rilab/catkin_ws/src/asw_ros/osod')
+sys.path.insert(0, '/home/rilab/catkin_ws/src/zavis_ros/osod')
 
 import torch
 from engine.predictor import DefaultPredictor

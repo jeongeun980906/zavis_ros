@@ -4,7 +4,7 @@
 import sys
 
 # adding Folder_2 to the system path
-sys.path.insert(0, '/home/rilab/catkin_ws/src/ASW_ros/osod')
+sys.path.insert(0, '/home/rilab/catkin_ws/src/zavis_ros/osod')
 
 import cv2
 import torch
@@ -59,7 +59,7 @@ class image_converter:
 
         self.predictor = DefaultPredictor(cfg,model)
         self.matcher = matcher()
-        self.query_name = "cellphone"
+        self.query_name = "book"
         self.matcher.tokenize(self.query_name)
         print("Model Loaded")
         self.pcl = PointCloudVisualizer()
@@ -67,19 +67,19 @@ class image_converter:
 
     def detect(self):
         
-        data = rospy.wait_for_message('/camera_controller/color/image_raw',Image)        
-        pcl_data = rospy.wait_for_message('/camera_controller/depth/points',PointCloud2)
+        data = rospy.wait_for_message('/stereo_inertial_publisher/color/image',Image)
+        pcl_data = rospy.wait_for_message('/stereo_inertial_publisher/stereo/points',PointCloud2)
 
         cv_image= self.bridge.imgmsg_to_cv2(data,"bgr8")
         pred = self.predictor(cv_image)
         
         self.pcl.convertCloudFromRosToOpen3d(pcl_data)
-        self.pcl.visualize_pcd()
+        # self.pcl.visualize_pcd()
 
         pred_boxes, pred_classes, pred_epis, pred_alea = post_process(pred)
         unk = (pred_classes ==20)
         demo_image = plot(cv_image,pred_boxes,pred_classes)
-        score,candidate_box = self.matcher.matching_score(cv_image,pred_boxes[unk])
+        score,candidate_box,show_patch = self.matcher.matching_score(cv_image,pred_boxes[unk])
         candidate_image= plot_candidate(cv_image,candidate_box,score,self.query_name)
         # cv2.imshow("Raw", cv_image)
         demo_image = cv2.resize(demo_image, None,  fx = 0.5, fy = 0.5) 

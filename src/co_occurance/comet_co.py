@@ -5,7 +5,7 @@ from det.detector import landmark_names
 
 WORD_DICT= {
     'diningtable':'kitchen table', 'sofa':'sofa', 'tvmonitor':'tv', 'armchair':'armchair', 
-    'desk': 'desk', 'table':'coffee table', 'coffee table':'coffee table'
+    'desk': 'desk', 'table':'table', 'coffeetable':'coffee table', 'side table': 'side table'
 }
 
 class co_occurance_score():
@@ -57,5 +57,5 @@ class co_occurance_score():
 if __name__ == '__main__':
     co = co_occurance_score('cuda')
     co.landmark_init(landmark_names)
-    score = co.score('wallet')
+    score = co.score('thermos bottle')
     print(score,landmark_names)

@@ -4,8 +4,8 @@ import numpy as np
 import yaml
 import cv2
 
-MAP_PATH = '../../maps/mymap.pgm'
-config_file = '../../maps/mymap.yaml'
+MAP_PATH = '../../maps/map_v2_new.pgm'
+config_file = '../../maps/map_v4.yaml'
 
 with open(MAP_PATH, 'rb') as pgmf:
     im = plt.imread(pgmf)
@@ -21,7 +21,7 @@ unknown_color = int(map_config['free_thresh']*255)
 map = np.zeros((im.shape[0],im.shape[1],3))
 occupied = (im==0)
 map[occupied] = [0,0,0]
-free = (im == 254)
+free = (im == 254) + (im==255)
 map[free] = [1,1,1]
 
 POINT_SIZE = 2
@@ -38,7 +38,7 @@ new_map = copy.deepcopy(temp_map)
 
 def callback(event, x, y, flags, param):
     global last_x,last_y,drawing,temp_map,ix,iy,new_map
-    color = [0,0,0] if COLOR=='black' else [255,255,255]
+    color = [0,0,0] if COLOR=='black' else [1,1,1]
     if MODE == 'point':
         if event == cv2.EVENT_LBUTTONUP:
             temp_map[y-POINT_SIZE:y+POINT_SIZE,x-POINT_SIZE:x+POINT_SIZE] = color
@@ -91,6 +91,10 @@ while(1):
     
     if k == ord('s'):
         np.save('../../maps/new_map.npy',new_map)
+        new = new_map
+        new = new[:,:,0]
+        new_cv = (255*new).astype(np.uint8).clip(0,255)
+        cv2.imwrite(MAP_PATH, new_cv)
         break
 
 cv2.destroyAllWindows()

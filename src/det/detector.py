@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
 # importing sys
+from ast import excepthandler
 import sys
+from tempfile import TemporaryFile
 
 # adding Folder_2 to the system path
-sys.path.insert(0, '/home/rilab/catkin_ws/src/asw_ros/osod')
+sys.path.insert(0, '/home/rilab/catkin_ws/src/zavis_ros/osod')
 
 from det.loader import load_det
 import cv2
@@ -23,6 +25,8 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 from control_msgs.msg import JointControllerState
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
 
+from structures.box import Boxes,pairwise_ioa,pairwise_iou
+
 from pcl_utils import PointCloudVisualizer
 import open3d as o3d
 import numpy as np
@@ -37,7 +41,7 @@ CLASS_NAME_NEW = (*VOC_CLASS_NAMES, 'unknown')
 
 LANDMARK_IN = [10, 17, 19] # 8
 in_landmark_names = ['diningtable','sofa','tvmonitor'] #'chair',
-out_landmark_names = ['desk','coffee table','armchair']
+out_landmark_names = ['desk','side table','armchair','table','coffeetable']
 landmark_names = in_landmark_names+out_landmark_names
 
 detection_labels = []
@@ -70,7 +74,7 @@ class zeroshot_det:
         # focal_length_y = 0.5 * height / math.tan(to_rad(fov_y/2))
         self.fx, self.fy, self.cx, self.cy = (focal_length,focal_length, width/2, height/2)
 
-    def detect_landmarks_query(self,vis=True):
+    def detect_landmarks_query(self,vis=True,static=False):
         candidate_poses = []
         candidate_labels = []
         candidate_entropys = []
@@ -86,11 +90,13 @@ class zeroshot_det:
             # pcl_data = rospy.wait_for_message('/camera/depth/color/points',PointCloud2)
 
             # cpos = rospy.wait_for_message("/amcl_pose",PoseWithCovarianceStamped)
-            cpos = rospy.wait_for_message("/RosAria/pose",Odometry)
-            yaw = rospy.wait_for_message('/dynamixel_workbench/joint_states',JointState)
-            yaw = yaw.position[0]
-            cpos = cpos.pose.pose
-
+            if not static:
+                cpos = rospy.wait_for_message("/RosAria/pose",Odometry)
+                yaw = rospy.wait_for_message('/dynamixel_workbench/joint_states',JointState)
+                yaw = yaw.position
+                cpos = cpos.pose.pose
+            else:
+                cpos,yaw = None, None
             cv_image= self.bridge.imgmsg_to_cv2(data,"bgr8")
             # cv_image_depth= self.bridge.imgmsg_to_cv2(data2,desired_encoding='passthrough')
             # print(cv_image_depth.dtype)
@@ -108,13 +114,15 @@ class zeroshot_det:
                     mask[e] = True
                     in_pred_classes.append(detection_labels.index(cat.item()))
             in_pred_classes = torch.LongTensor(in_pred_classes)
-            in_pred_boxes = pred_boxes[mask].tensor.cpu()
-            in_entropy = torch.zeros(in_pred_classes.shape[0])
+            in_pred_boxes = pred_boxes[mask] 
+            in_entropy = torch.ones(in_pred_classes.shape[0])*0.5
             mask = (pred_classes ==20)
             out_pred_boxes = pred_boxes[mask]
 
             demo_image = plot(cv_image,pred_boxes,pred_classes)
             out_pred_boxes, out_pred_classes, out_entropy, query_score, query_boxes,query_candidate_patchs = self.matcher.matching(cv_image,out_pred_boxes)
+            out_pred_boxes, out_pred_classes, out_entropy = self.filter_unseen(in_pred_boxes,out_pred_boxes,out_pred_classes,out_entropy)
+            in_pred_boxes = in_pred_boxes.tensor.cpu()
             if len(out_pred_classes)>0:
                 out_pred_classes = out_pred_classes + len(in_landmark_names)
 
@@ -142,12 +150,15 @@ class zeroshot_det:
             candidate_labels += pred_classes.numpy().tolist()
             candidate_entropys += pred_entropy.numpy().tolist()
             candidate_qposes += poses[landmark_index:]
-            candidate_qpatchs = np.concatenate((candidate_qpatchs,query_candidate_patchs),axis=0)
+            try:
+                candidate_qpatchs = np.concatenate((candidate_qpatchs,query_candidate_patchs),axis=0)
+            except:
+                pass
         return candidate_poses,candidate_labels,candidate_entropys,candidate_qposes,candidate_qpatchs
 
     def detect_query(self,vis=False):
         candidate_qposes = []
-        candidate_qpatches = np.zeros((0,256,256,3),dtype=np.uint8)
+        candidate_qpatchs = np.zeros((0,256,256,3),dtype=np.uint8)
         for _ in range(3):
             # data = rospy.wait_for_message('/camera/color/image_raw',Image)  
             data = rospy.wait_for_message('/stereo_inertial_publisher/color/image',Image)    
@@ -158,7 +169,7 @@ class zeroshot_det:
             # cpos = rospy.wait_for_message("/amcl_pose",PoseWithCovarianceStamped)
             cpos = rospy.wait_for_message("/RosAria/pose",Odometry)
             yaw = rospy.wait_for_message('/dynamixel_workbench/joint_states',JointState)
-            yaw = yaw.process_value
+            yaw = yaw.position
             cpos = cpos.pose.pose
 
             cv_image= self.bridge.imgmsg_to_cv2(data,"bgr8")
@@ -170,16 +181,20 @@ class zeroshot_det:
             self.PCV.convertCloudFromRosToOpen3d(pcl_data)
 
             pred_boxes, pred_classes, pred_epis, pred_alea = post_process(pred)
+            demo_image = plot(cv_image,pred_boxes,pred_classes)
             mask = (pred_classes ==20)
             score,candidate_box,show_patch = self.matcher.matching_score(cv_image,pred_boxes[mask])
-            poses = self.transform(candidate_box,cpos,yaw)
-            if vis:
-                query_image = plot_candidate(cv_image,candidate_box,score,self.query_name)
-                query_image = cv2.resize(query_image,None, fx = 0.5, fy = 0.5) 
-                cv2.imshow("CLIP_Query",query_image)
-                cv2.waitKey(3)
-            candidate_qposes += poses
-            candidate_qpatchs = np.concatenate((candidate_qpatchs,show_patch),axis=0)
+            if len(score) >0:
+                poses = self.transform(candidate_box,cpos,yaw)
+                if vis:
+                    demo_image = cv2.resize(demo_image, None,  fx = 0.5, fy = 0.5) 
+                    query_image = plot_candidate(cv_image,candidate_box,score,self.query_name)
+                    query_image = cv2.resize(query_image,None, fx = 0.5, fy = 0.5) 
+                    cv2.imshow("OSOD", demo_image)
+                    cv2.imshow("CLIP_Query",query_image)
+                    cv2.waitKey(3)
+                candidate_qposes += poses
+                candidate_qpatchs = np.concatenate((candidate_qpatchs,show_patch),axis=0)
         return candidate_qposes, candidate_qpatchs
 
     def transform(self,candidate_boxes,pose,cam_yaw):
@@ -197,12 +212,17 @@ class zeroshot_det:
             pos = pose.position
             # rot = pose.orientation.z
             rot = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
-            rot = euler_from_quaternion(rot)[-1]+ cam_yaw
+            rot = euler_from_quaternion(rot)[-1]+ cam_yaw[0]
+            roll = cam_yaw[1]
             # print(rot,pos)
+            pcd.transform([[math.cos(roll),0,-math.sin(roll),0],
+                            [0,1,0,0],
+                            [math.sin(roll),0,math.cos(roll),0],
+                            [0,0,0,1]]) # tilit
             pcd.transform([[math.cos(rot), -math.sin(rot),0, pos.x+0.1],
                 [math.sin(rot), math.cos(rot), 0, pos.y],
                 [0, 0, 1, pos.z+1.0],
-                [0, 0, 0, 1]])
+                [0, 0, 0, 1]]) # to world
         map_points = np.asarray(pcd.points)
         # print(points.shape)
         for p,c,mp in zip(points,colors,map_points):
@@ -211,10 +231,13 @@ class zeroshot_det:
         img,mapping = crop_zeros(img,mapping)
         img = cv2.resize(img,(1280,720))
         mapping = cv2.resize(mapping,(1280,720))
-        cv2.imshow("?",img)
+        # cv2.imshow("?",img)
         # o3d.visualization.draw_geometries([pcd])
         res = []
-        candidate_boxes = candidate_boxes.cpu().numpy().astype(np.int16)
+        try:
+            candidate_boxes = candidate_boxes.cpu().numpy().astype(np.int16)
+        except:
+            return res
         for candidate_box in candidate_boxes:
             temp = []
             crop_points = copy.deepcopy(mapping[candidate_box[1]:candidate_box[3],candidate_box[0]:candidate_box[2],:])
@@ -245,6 +268,31 @@ class zeroshot_det:
                         temp.append(dict(x=cp[0],y=cp[1],z=cp[2]))
             res.append(temp)
         return res
+    def filter_unseen(self,in_box,out_pred_boxes, out_pred_classes, out_entropy):
+        try: 
+            in_box.tensor
+        except:
+            out_pred_boxes = out_pred_boxes.tensor.cpu()
+            return out_pred_boxes, out_pred_classes, out_entropy
+        try:
+            out_pred_boxes.tensor
+        except:
+            return out_pred_boxes, out_pred_classes, out_entropy
+        if in_box.tensor.shape[0]>0 and out_pred_boxes.tensor.shape[0]>0:
+            IoU = pairwise_iou(in_box,out_pred_boxes)
+            max_iou,_ = torch.max(IoU,axis=0)
+            # print(max_iou,out_pred_classes,out_entropy)
+            mask = (max_iou<0.01)
+            # print(mask)
+            out_pred_boxes = out_pred_boxes[mask].tensor.cpu()
+            return out_pred_boxes, out_pred_classes[mask], out_entropy[mask]
+        else:
+            try: 
+                out_pred_boxes = out_pred_boxes.tensor
+            except:
+                pass
+            return out_pred_boxes.cpu(), out_pred_classes, out_entropy
+
 
 def crop_zeros(image,mapping):
     y_nonzero, x_nonzero, _ = np.nonzero(image+100)

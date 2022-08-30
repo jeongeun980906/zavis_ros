@@ -5,17 +5,18 @@ import numpy as np
 from PIL import Image
 
 class matcher:
-    def __init__(self, landmark_names = None, threshold = 30, device='cuda'):
+    def __init__(self, landmark_names = [], threshold = 28, device='cuda'):
         self.clip_model, self.clip_preprocess = clip.load("ViT-B/32", device=device)
         self.device = device
         self.thres = threshold
         self.landmark_names = landmark_names
-        self.lthres = 30
+        self.lthres = 29
         # self.tokenize_query(query_object_name)
         self.clip_model.eval()
 
     def tokenize(self,query_object_name):
         text = []
+        
         for name in self.landmark_names:
             new_name = ''
             if len(name)>2:
@@ -34,27 +35,32 @@ class matcher:
         boxes = pred_boxes.tensor.cpu()
         patches,vis_patches = self.make_patch(img,boxes.numpy())
         if len(patches) == 0:
-            return torch.FloatTensor([]),torch.LongTensor([])
+            return torch.FloatTensor([]),torch.FloatTensor([]),torch.FloatTensor([]),torch.FloatTensor([]),torch.FloatTensor([]),None
         # print(dis.shape)
         image_features = self.clip_model.encode_image(patches.to(self.device)).detach().cpu()
 
         dis = torch.matmul(self.text_features,image_features.T)
         dis = dis.type(torch.FloatTensor)
         landmarks = dis[:-1,:]
-        softmax = torch.softmax(landmarks,0)
+        softmax = torch.softmax(landmarks,1)
         # print(softmax.shape) # [6 x N]
-        entropy = -torch.sum(softmax*torch.log(softmax),1)
-
+        entropy = -torch.sum(softmax*torch.log(softmax),0)
+        print(entropy)
+        # index2 = (entropy<1)
+        # print(index2)
         max_value, max_index = torch.max(landmarks,axis=0)
-        index = torch.where(max_value>self.lthres)
+        index = (max_value>self.lthres)
+        # index = index*index2
         class_name = max_index[index]
-        lboxes = boxes[index]
+        lboxes = pred_boxes[index]
+        entropy = entropy[index]
         # print(class_name)
 
         query = dis[-1,:]
         index = torch.where(query>self.thres)[0].cpu()
         qshow_patch = vis_patches[index.numpy()]
         # print(dis.shape)
+        
         qscore = query[index]
         qboxes = boxes[index]
 
@@ -100,7 +106,7 @@ class matcher:
         patches,vis_patches = self.make_patch(img,boxes.numpy())
         # print(patches.shape)
         if len(patches) == 0:
-            return [],[],torch.BoolTensor([False])
+            return torch.FloatTensor([]),torch.FloatTensor([]),None
         image_features = self.clip_model.encode_image(patches.to(self.device)).detach().cpu()
         
         # print(text_features)

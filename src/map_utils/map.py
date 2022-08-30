@@ -13,8 +13,8 @@ from det.detector import landmark_names
 from map_utils.union import UnionFind
 from tf.transformations import quaternion_from_euler, euler_from_quaternion
 
-MAP_PATH = '../maps/mymap_new.pgm'
-config_file = '../maps/mymap.yaml'
+MAP_PATH = '../maps/map_v2_new.pgm'
+config_file = '../maps/map_v2.yaml'
 
 class frontier_map:
     def __init__(self):
@@ -31,13 +31,13 @@ class frontier_map:
 
         self.STEP_SIZE = map_config['resolution']
         self.map_size = self.grid_map.shape
-        self.scenebound = [[85,225], [180,290]]
+        self.scenebound = [[60,225], [180,330]]
         print(self.map_size)
         # self.ORGIN = map_config['origin'][:-1]
         self.ORGIN = [-10,-10]
         self.robot_size = 2
         self.max_laser = 5
-        self.max_obj_size = 50
+        self.max_obj_size = 100
         self.landmark_names = landmark_names
         self.landmark_colors = plt.cm.get_cmap('Set2', len(landmark_names))
 
@@ -53,18 +53,19 @@ class frontier_map:
         cpos = cpos.pose.pose
         self.process_scan_data(scan_data,cpos)
     
-    def plot_current_pose(self):
-        cpos = rospy.wait_for_message("/RosAria/pose",Odometry)
-        cpos = cpos.pose.pose
-        gridpose = self.xyz2grid(cpos)
+    def plot_current_pose(self,plot_cpos = True):
         temp = copy.deepcopy(self.grid_map) # H x W x 3
-        temp[gridpose[0]-self.robot_size:gridpose[0]+self.robot_size,
+        if plot_cpos:
+            cpos = rospy.wait_for_message("/RosAria/pose",Odometry)
+            cpos = cpos.pose.pose
+            gridpose = self.xyz2grid(cpos)
+            temp[gridpose[0]-self.robot_size:gridpose[0]+self.robot_size,
                             gridpose[1]-self.robot_size:gridpose[1]+self.robot_size] = [0,0,255]
         show_grid = np.ones((40, temp.shape[1],3), dtype=temp.dtype)*255
-        show_grid = np.concatenate((show_grid,temp),axis=0)
+        show_grid = np.concatenate((temp,show_grid),axis=0)
         for e,ln in enumerate(landmark_names):
             x = int(90* (e%4))
-            y = int(20*(e//4)+10)
+            y = int(20*(e//4)+10) + self.map_size[1]
             # print(x,y)
             color = list(self.landmark_colors(e))[:-1] 
             color = [int(255*c) for c in color]
@@ -76,7 +77,9 @@ class frontier_map:
     def postprocesslandmarks(self,bposes,blabels,bentropy):
         temp_map = np.zeros((len(self.landmark_names),self.map_size[0],self.map_size[1]))
         entropy_map = np.zeros((len(self.landmark_names),self.map_size[0],self.map_size[1]))
+        i = 1
         for poses, label,entropy in zip(bposes,blabels,bentropy):
+            occ_map = np.zeros((len(self.landmark_names),self.map_size[0],self.map_size[1]))
             for p in poses:
                 if p != None:
                     x = p['x']
@@ -84,8 +87,14 @@ class frontier_map:
 
                     new_y = int((x-self.ORGIN[0])//self.STEP_SIZE)
                     new_x = self.map_size[0]- int((y-self.ORGIN[1])//self.STEP_SIZE)
-                    temp_map[label,new_x,new_y] += 1
-                    entropy_map[label,new_x,new_y] += entropy
+                    try:
+                        if occ_map[label,new_x,new_y] == 0:
+                            temp_map[label,new_x,new_y] += 1
+                            entropy_map[label,new_x,new_y] += entropy
+                            occ_map[label,new_x,new_y] = 1
+                    except:
+                        pass
+            i += 1
         indexes = list(np.where(temp_map>1))
         resl = np.unique(indexes[0])
         res_pose = [[] for _ in range(len(resl))]
@@ -102,7 +111,37 @@ class frontier_map:
                 res_count[ind] +=1
         res_entropy = [e/n for e,n in zip(res_entropy,res_count)]
         return res_pose,resl.tolist(),res_entropy
-            
+
+
+    # def postprocessquery(self,pose,patches):
+    #     temp_map = np.zeros((2,self.map_size[0],self.map_size[1]))
+    #     for e, p in enumerate(pose):
+    #         if p != None:
+    #             x = p['x']
+    #             y = p['y']
+
+    #             new_y = int((x-self.ORGIN[0])//self.STEP_SIZE)
+    #             new_x = self.map_size[0]- int((y-self.ORGIN[1])//self.STEP_SIZE)
+    #             temp_map[0,new_x,new_y] += 1
+    #             temp_map[1,new_x,new_y] = e
+    #     mask = np.where(temp_map[0,:,:]>1)
+    #     for x,y in zip(mask[0],mask[1]):
+
+    #     print(mask)
+    def plot_unct(self,unct_thres= 0.7):
+        '''
+        just filter by threshold to show
+        '''
+        imshowgrid = copy.deepcopy(self.unct_map)
+        # mask_1 = (imshowgrid> unct_thres)
+        # mask_2 = (imshowgrid<unct_thres) * (imshowgrid>0)
+        # imshowgrid[mask_1] = 1.0
+        # imshowgrid[mask_2] = 0.5
+
+        plt.imshow(imshowgrid)
+        plt.axis('off')
+        plt.show()
+
     def color_landmarks(self,poses,labels,entropy):
         for pose,label,ent in zip(poses,labels,entropy):
             for p in pose:
@@ -149,25 +188,31 @@ class frontier_map:
                 del imshow_grid
         plt.show()
 
-    def color_path(self,path,cpose):
-        pose = path['pos']
-        imshow_grid = copy.deepcopy(self.grid_map)
-        x = pose['x']
-        y = pose['y']
-        new_y = int((x-self.ORGIN[0])//self.STEP_SIZE)
-        new_x = self.map_size[0]- int((y-self.ORGIN[1])//self.STEP_SIZE)
-        imshow_grid[new_x-3:new_x+3,new_y-3:new_y+3] = [0,255,0]
+    def color_path(self,pose,imshow_grid = None,pointstamp=None, NUM_POINTS = 0):
+        try:
+            if imshow_grid == None:
+                imshow_grid = self.plot_current_pose(plot_cpos=False)#copy.deepcopy(self.gt_map)
+        except:
+            pass
+       # s print(pose)
+        if pose != None:
+            x = pose['x']
+            y = pose['y']
+            new_y = int((x-self.ORGIN[0])//self.STEP_SIZE)
+            new_x = self.map_size[0]- int((y-self.ORGIN[1])//self.STEP_SIZE)
+            imshow_grid[new_x-3:new_x+3,new_y-3:new_y+3] = [255,0,0]
+            cv2.putText(imshow_grid,str(NUM_POINTS),(new_y,new_x),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 170, 0), 1,cv2.LINE_AA)
+        if pointstamp != None:
+            x = pointstamp['x']
+            y = pointstamp['y']
+            new_y = int((x-self.ORGIN[0])//self.STEP_SIZE)
+            new_x = self.map_size[0]- int((y-self.ORGIN[1])//self.STEP_SIZE)
+            imshow_grid[new_x-1:new_x+1,new_y-1:new_y+1] = [0,100,255]
+        cv2.imshow("map",imshow_grid)
+        k = cv2.waitKey(1) & 0xFF
 
-        x = cpose['x']
-        y = cpose['y']
-        new_y = int((x-self.ORGIN[0])//self.STEP_SIZE)
-        new_x = self.map_size[0]- int((y-self.ORGIN[1])//self.STEP_SIZE)
-        imshow_grid[new_x-3:new_x+3,new_y-3:new_y+3] = [255,0,0]
-
-
-        plt.imshow(imshow_grid)
-        plt.axis('off')
-        plt.show()
+        return imshow_grid
 
     def process_scan_data(self,scan_data,cpos):
         angle_min = scan_data.angle_min
@@ -203,10 +248,10 @@ class frontier_map:
     def axis2rot(self,axis):
         theta = math.atan2(axis[1],axis[0]) # [-180, 180]
         theta = theta/math.pi*180
-        theta = 270-theta
-        if theta<0:
+        theta = 90+theta
+        if theta<-180:
             return theta+360
-        elif theta>380:
+        elif theta>180:
             return theta-360
         else:
             return theta
@@ -228,7 +273,7 @@ class frontier_map:
             self.grid_map[x,y] = [255,255,255]
 
 
-    def get_reachable(self,cpos,index):
+    def get_reachable(self,cpos,index,NUM = 2):
         '''
         LoI detection
         '''
@@ -248,14 +293,13 @@ class frontier_map:
             y = int(np.mean(grid_poss[1]))
             self.grid_map[x-3:x+3,y-3:y+3,:] = color
         except:
-            return None,None,None,None
+            return None,None,None
         axiss = [[0,1],[1,0],[0,-1],[-1,0],
                 [1/2,1/2],[-1/2,1/2],[-1/2,-1/2],[1/2,-1/2]]
-        step_size = 20
-        min_dis = 100
-        res = None
-        rpos = None
-        raxis = None
+        step_size = 100
+        res = []
+        distances = []
+        
         for axis in axiss:
             offset = self.check_reachable(x,y,axis,self.max_obj_size)
             # print(offset)
@@ -268,17 +312,29 @@ class frontier_map:
                     res_x = int(x+axis[0]*(offset+new_offest))
                     res_y = int(y+axis[1]*(offset+new_offest))
                     rpos = self.grid2xyz([res_x,res_y])
+                    res.append([rpos,axis])
                     dis = self.get_dis(rpos,cpos)
-                    if dis<min_dis:
-                        res = rpos
-                        min_dis = dis
-                        raxis = axis
-        if rpos != None:
-            rgrid = self.xyz2grid(rpos)
-            self.grid_map[rgrid[0]-3:rgrid[0]+3,rgrid[1]-3:rgrid[1]+3] = [255,0,255]
-            return res,self.axis2rot(raxis),min_dis,mean_unct
+                    distances.append(dis)
+        if len(distances)>NUM:
+            top_k = sorted(distances)[:NUM]
+            print('?',NUM)
+        elif len(distances)>0:
+            top_k = distances
         else:
-            return None,None,None,None
+            return None,None,None 
+        # print(top_k,distances)
+        rposes = []
+        rrots = []
+        for el in top_k:
+            ind = distances.index(el)
+            rpos = res[ind][0]
+            raxis = res[ind][1]
+            rgrid = self.xyz2grid(rpos)
+            # self.grid_map[rgrid[0]-3:rgrid[0]+3,rgrid[1]-3:rgrid[1]+3] = [255,0,255]
+            rposes.append(rpos)
+            rrots.append(self.axis2rot(raxis))
+        return rposes,rrots,mean_unct
+            
 
     def reset_landmark(self,landmark_indexs):
         for index in landmark_indexs:
@@ -319,7 +375,7 @@ class frontier_map:
         return None
     
     def check_reachable2(self,x,y, axis,step_size):
-        for i in range(step_size,5,-1):
+        for i in range(10,step_size):
             x_range = list(range(x,int(x+axis[0]*i)+1)) if axis[0]>0 else list(range(int(x+axis[0]*i),x+1))
             y_range = list(range(y,int(y+axis[1]*i)+1)) if axis[1]>0 else list(range(int(y+axis[1]*i),y+1))
             if len(x_range) != len(y_range) and (len(x_range)>1 and len(y_range)>1):

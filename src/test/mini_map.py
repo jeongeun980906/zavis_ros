@@ -11,9 +11,39 @@ class minimap:
         self.gridmap = np.zeros((200,200,3),dtype=np.uint8)
         self.unct_map = np.zeros((200,200))
         self.ORIGIN  = [-10,-1]
-
+        self.map_size = self.gridmap.shape
         self.landmark_names = landmark_names
         self.landmark_colors = plt.cm.get_cmap('tab20b', len(landmark_names))
+
+    def postprocesslandmarks(self,bposes,blabels,bentropy):
+        temp_map = np.zeros((len(self.landmark_names),self.map_size[0],self.map_size[1]))
+        entropy_map = np.zeros((len(self.landmark_names),self.map_size[0],self.map_size[1]))
+        for poses, label,entropy in zip(bposes,blabels,bentropy):
+            for p in poses:
+                if p != None:
+                    x = p['x']
+                    y = p['y']
+
+                    new_y = int((x-self.ORGIN[0])//self.STEP_SIZE)
+                    new_x = self.map_size[0]- int((y-self.ORGIN[1])//self.STEP_SIZE)
+                    temp_map[label,new_x,new_y] += 1
+                    entropy_map[label,new_x,new_y] += entropy
+        indexes = list(np.where(temp_map>1))
+        resl = np.unique(indexes[0])
+        res_pose = [[] for _ in range(len(resl))]
+        res_entropy = [0]*len(resl)
+        res_count = [0]*len(resl)
+
+        for label,x,y in zip(indexes[0],indexes[1],indexes[2]):
+            num_count = temp_map[label,x,y]
+            avg_entropy = entropy_map[label,x,y]/num_count
+            if label in resl:
+                ind = np.where(resl == label)[0][0]
+                res_pose[ind].append(self.grid2xyz([x,y]))
+                res_entropy[ind] += avg_entropy
+                res_count[ind] +=1
+        res_entropy = [e/n for e,n in zip(res_entropy,res_count)]
+        return res_pose,resl.tolist(),res_entropy
 
     def color_landmarks(self,poses,labels,entropy):
         for pose,label,ent in zip(poses,labels,entropy):

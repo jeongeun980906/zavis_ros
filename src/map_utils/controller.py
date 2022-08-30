@@ -12,6 +12,7 @@ from sensor_msgs.msg import JointState
 from dynamixel_workbench_msgs.srv import DynamixelCommand
 from nav_msgs.srv import GetPlan
 from gazebo_msgs.msg import ModelStates
+from nav_msgs.msg import Odometry
 
 import math
 
@@ -30,7 +31,7 @@ class ros_controller:
         self.goal_pub = rospy.Publisher("/move_base_simple/goal",PoseStamped,queue_size = 10)
         self.goal_cancel = rospy.Publisher("/move_base/cancel",GoalID,queue_size=10)
         
-    def move2point(self,goal_pose, goal_rot = None):
+    def move2point(self,goal_pose, goal_rot = None,imshow_grid=None,scenemap=None,NUM_POINTS=0):
         '''
         args:
             goal_pose: dict (x,y,yaw)
@@ -56,35 +57,48 @@ class ros_controller:
         data.pose.position.z = 0
         while True:
             self.goal_pub.publish(data)
-            rospy.sleep(0.01)
+            rospy.sleep(0.5)
             resp = rospy.wait_for_message("/move_base/status",GoalStatusArray)
             resp = resp.status_list
             if len(resp)>0:
                 text = resp[-1].text
-                print(len(text))
+                # print(len(text))
                 if text == 'This goal has been accepted by the simple action server':
                     break
             rospy.sleep(0.01)
         if flag:
-            for _ in range(int(1e3)):
-                resp = rospy.wait_for_message("/move_base/status",GoalStatusArray)
+            for _ in range(int(3e2)):
+                try:
+                    resp = rospy.wait_for_message("/move_base/status",GoalStatusArray,2)
+                    # print(resp)
+                except:
+                    break
+                cpos = self.get_pose()
+                if cpos == None:
+                    break
                 resp = resp.status_list
                 if len(resp)>0:
                     text = resp[-1].text
                     goal_id = resp[-1].goal_id.id
+                    scenemap.color_path(None,imshow_grid,cpos,NUM_POINTS)
+
                     # print(goal_id)
                     if text == 'Goal reached.':
+                        scenemap.color_path(cpos,imshow_grid,None,NUM_POINTS)
                         return True
             cancel = GoalID()
             cancel.id = goal_id
             for _ in range(10):
                 self.goal_cancel.publish(cancel)
+            scenemap.color_path(cpos,imshow_grid,None,NUM_POINTS)
             return False
         else:
-            for _ in range(int(1e3)):
+            for _ in range(int(3e2)):
                 cpos = self.get_pose()
+                scenemap.color_path(None,imshow_grid,cpos,NUM_POINTS)
                 dis = math.sqrt((cpos['x']-goal_pose['x'])**2+(cpos['y']-goal_pose['y'])**2)
                 if dis<1e-2:
+                    scenemap.color_path(cpos,imshow_grid,None,NUM_POINTS)
                     return True
             resp = rospy.wait_for_message("/move_base/status",GoalStatusArray)
             resp = resp.status_list
@@ -93,6 +107,7 @@ class ros_controller:
             cancel.id = goal_id
             for _ in range(10):
                 self.goal_cancel.publish(cancel)
+            scenemap.color_path(cpos,imshow_grid,None,NUM_POINTS)
             return False
 
     # def move_cam(self,angle):
@@ -140,7 +155,11 @@ class ros_controller:
         returns:
             dict(x,y,yaw(rad))
         '''
-        data = rospy.wait_for_message('/amcl_pose',PoseWithCovarianceStamped)
+        # data = rospy.wait_for_message('/amcl_pose',PoseWithCovarianceStamped)
+        try:
+            data = rospy.wait_for_message("/RosAria/pose",Odometry,2)
+        except:
+            return None
         x = data.pose.pose.position.x 
         y = data.pose.pose.position.y
         yaw = data.pose.pose.orientation.z

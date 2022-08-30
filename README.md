@@ -31,7 +31,7 @@ rosrun sicktoolbox_wrapper sicklms _port:=/dev/ttyUSB0 _baud:=38400
 ### Camera
 
 ```
-roslaunch asw_ros oakd.launch
+roslaunch zavis_ros oakd.launch
 ```
 
 Need to install [depthai-ros](https://github.com/luxonis/depthai-ros). 

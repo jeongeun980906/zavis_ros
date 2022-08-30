@@ -11,11 +11,11 @@ class traj_schedular():
         self.buffer = [] 
 
         self.thres = 2 # 1
-        self.ratio = 1
-        self.unct_ratio = 0.05
+        self.ratio = 20
+        self.unct_ratio = 10.0
 
         self.co_thres = co_thres
-        self.unct_thres = 2.5
+        self.unct_thres = 2.0
         self.landmark_names = landmark_names
         
     def set_score(self,co_occurence):
@@ -81,14 +81,14 @@ class traj_schedular():
                 dis = self.shortest_path_length(pos1,pos2)
                 score_matrix[i,j] = dis
                 score_matrix[j,i] = dis
-            
+        print(score_matrix)
         return score_matrix
 
 
     def optimize(self,score, unct,dis_matrix):
         index = [0]
         distance = dis_matrix
-        score = self.ratio*(1+1e-3-np.asarray(score))#+ self.unct_ratio * np.asarray(unct)
+        score = self.ratio*(1+1e-3-np.asarray(score))  + self.unct_ratio * np.asarray(unct)
         for i in range(1,len(score)):
             temp = np.arange(len(score))
             temp = np.delete(temp,index)
