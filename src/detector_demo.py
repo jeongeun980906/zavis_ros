@@ -59,7 +59,7 @@ class image_converter:
 
         self.predictor = DefaultPredictor(cfg,model)
         self.matcher = matcher()
-        self.query_name = "book"
+        self.query_name = "yellow book"
         self.matcher.tokenize(self.query_name)
         print("Model Loaded")
         self.pcl = PointCloudVisualizer()
@@ -92,5 +92,5 @@ ic = image_converter()
 rospy.init_node("detector")
 while not rospy.is_shutdown():
     ic.detect()
-    rospy.sleep(1)
+    rospy.sleep(0.2)
 cv2.destroyAllWindows()
